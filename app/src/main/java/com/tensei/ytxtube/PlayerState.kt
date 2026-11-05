@@ -736,11 +736,20 @@ class PlayerState(private val scope: CoroutineScope) {
     var selectedSubtitleLanguage by mutableStateOf<String?>(null)
         private set
 
+    /** Language code the current captions are machine-translated into, or null for the original. */
+    var subtitleTranslation by mutableStateOf<String?>(null)
+        private set
+
     private var activeCues by mutableStateOf<List<ParsedCue>>(emptyList())
     private var subtitleFetchJob: kotlinx.coroutines.Job? = null
 
-    fun setSubtitleLanguage(code: String?, trackUrl: String? = null) {
+    fun setSubtitleLanguage(code: String?, trackUrl: String? = null, translation: String? = null) {
         selectedSubtitleLanguage = code
+        when {
+            code == null -> subtitleTranslation = null
+            translation != null -> subtitleTranslation = translation
+            trackUrl != null -> subtitleTranslation = null
+        }
         subtitleFetchJob?.cancel()
         val p = controller
         try {
@@ -766,10 +775,9 @@ class PlayerState(private val scope: CoroutineScope) {
         }
 
         val videoId = current?.id ?: return
-        val url = trackUrl ?: run {
-            val info = StreamCache.get(videoId)
-            info?.subtitles?.firstOrNull { it.languageTag == code }?.content
-                ?: CaptionTracks.get(videoId)?.firstOrNull { it.languageTag == code }?.url
+        val rawUrl = trackUrl ?: captionUrl(videoId, code)
+        val url = rawUrl?.let { source ->
+            subtitleTranslation?.let { target -> translatedCaptionUrl(source, target) } ?: source
         }
 
         if (url != null) {
@@ -797,6 +805,47 @@ class PlayerState(private val scope: CoroutineScope) {
         }
     }
 
+
+    /** First usable caption track code for a video, manual tracks before auto-generated. */
+    private fun firstCaptionCode(videoId: String): String? {
+        val info = StreamCache.get(videoId)
+        return info?.subtitles?.firstOrNull { it.isUrl && it.content.isNotBlank() }?.languageTag
+            ?: CaptionTracks.get(videoId)?.firstOrNull()?.languageTag
+    }
+
+    private fun captionUrl(videoId: String, code: String?): String? {
+        if (code == null) return null
+        val info = StreamCache.get(videoId)
+        return info?.subtitles?.firstOrNull { it.languageTag == code }?.content
+            ?: CaptionTracks.get(videoId)?.firstOrNull { it.languageTag == code }?.url
+    }
+
+    /**
+     * Ask YouTube's timedtext endpoint for the same track machine-translated into [target].
+     * Any existing tlang is replaced so switching languages does not stack parameters.
+     */
+    private fun translatedCaptionUrl(source: String, target: String): String {
+        val cleaned = source
+            .replace(Regex("([?&])tlang=[^&]*"), "${'$'}1")
+            .replace("?&", "?")
+            .replace("&&", "&")
+            .trimEnd('?', '&')
+        val separator = if ('?' in cleaned) '&' else '?'
+        return "$cleaned${separator}tlang=$target"
+    }
+
+    /** Translate the current (or first available) caption track into [target]. */
+    fun translateSubtitles(target: String) {
+        val videoId = current?.id ?: return
+        val baseCode = selectedSubtitleLanguage ?: firstCaptionCode(videoId)
+        val baseUrl = captionUrl(videoId, baseCode)
+        if (baseCode == null || baseUrl == null) {
+            actionMessage = "No captions to translate"
+            return
+        }
+        setSubtitleLanguage(baseCode, baseUrl, translation = target)
+        actionMessage = "Translated captions: ${CaptionLanguages.nameFor(target)}"
+    }
 
     fun retry() = current?.let { item -> StreamCache.invalidate(item.id); current = null; open(item) }
 

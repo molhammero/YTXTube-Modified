@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -31,12 +32,14 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.SubtitlesOff
+import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.WatchLater
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -309,6 +312,8 @@ fun SubtitlesSheet(
     val c = MaterialTheme.colorScheme
     val videoId = player.current?.id
     var info by remember(videoId) { mutableStateOf(videoId?.let { StreamCache.get(it) }) }
+    var translating by remember(videoId) { mutableStateOf(false) }
+    var languageQuery by remember(videoId) { mutableStateOf("") }
 
     LaunchedEffect(videoId) {
         if (info == null && videoId != null) {
@@ -353,72 +358,154 @@ fun SubtitlesSheet(
             Text("Captions / Subtitles", fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
             Spacer(Modifier.height(14.dp))
 
-            // Option 1: Off (Turn off captions)
-            val isOff = player.selectedSubtitleLanguage == null
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .pressable {
-                        player.setSubtitleLanguage(null)
-                        onDismiss()
-                    }
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(if (isOff) c.surfaceContainerHigh else Color.Transparent)
-                    .padding(horizontal = 12.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(Icons.Rounded.SubtitlesOff, contentDescription = null, tint = c.onSurfaceVariant, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(12.dp))
-                Text("Off", fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp, color = c.onSurface, modifier = Modifier.weight(1f))
-                if (isOff) {
-                    Icon(Icons.Rounded.Check, contentDescription = "Selected", tint = c.primary, modifier = Modifier.size(18.dp))
+            if (translating) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .pressable { translating = false }
+                        .clip(RoundedCornerShape(10.dp))
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("‹", fontSize = 24.sp, color = c.primary, modifier = Modifier.width(22.dp))
+                    Text("Translate captions", fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp, color = c.onSurface)
                 }
-            }
-
-            Spacer(Modifier.height(4.dp))
-            HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f))
-            Spacer(Modifier.height(4.dp))
-
-            if (subtitleTracks.isEmpty()) {
-                Text(
-                    "No captions available for this video.",
-                    color = c.onSurfaceVariant,
-                    fontSize = 13.5.sp,
-                    modifier = Modifier.padding(vertical = 12.dp),
+                OutlinedTextField(
+                    value = languageQuery,
+                    onValueChange = { languageQuery = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    placeholder = { Text("Search all ${CaptionLanguages.all.size} languages", fontSize = 13.sp) },
                 )
-            } else {
+                Spacer(Modifier.height(6.dp))
+                val languages = remember(languageQuery) {
+                    val q = languageQuery.trim()
+                    if (q.isEmpty()) CaptionLanguages.all
+                    else CaptionLanguages.all.filter { it.name.contains(q, true) || it.code.contains(q, true) }
+                }
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .heightIn(max = 380.dp)
                         .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
-                    subtitleTracks.forEach { track ->
-                        val selected = player.selectedSubtitleLanguage == track.code
-
+                    languages.forEach { language ->
+                        val selected = player.subtitleTranslation == language.code
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .pressable {
-                                    player.setSubtitleLanguage(track.code, track.url)
+                                    player.translateSubtitles(language.code)
                                     onDismiss()
                                 }
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(if (selected) c.surfaceContainerHigh else Color.Transparent)
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                                .padding(horizontal = 12.dp, vertical = 9.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Icon(
-                                Icons.Rounded.Subtitles,
-                                contentDescription = null,
-                                tint = if (selected) c.primary else c.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp),
-                            )
-                            Spacer(Modifier.width(12.dp))
-                            Text(track.label, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = c.onSurface, modifier = Modifier.weight(1f))
+                            Text(language.name, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = c.onSurface, modifier = Modifier.weight(1f))
                             if (selected) {
                                 Icon(Icons.Rounded.Check, contentDescription = "Selected", tint = c.primary, modifier = Modifier.size(18.dp))
                             }
+                        }
+                    }
+                }
+            } else {
+                // Option 1: Off (Turn off captions)
+                val isOff = player.selectedSubtitleLanguage == null
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .pressable {
+                            player.setSubtitleLanguage(null)
+                            onDismiss()
+                        }
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (isOff) c.surfaceContainerHigh else Color.Transparent)
+                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Rounded.SubtitlesOff, contentDescription = null, tint = c.onSurfaceVariant, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(12.dp))
+                    Text("Off", fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp, color = c.onSurface, modifier = Modifier.weight(1f))
+                    if (isOff) {
+                        Icon(Icons.Rounded.Check, contentDescription = "Selected", tint = c.primary, modifier = Modifier.size(18.dp))
+                    }
+                }
+
+                Spacer(Modifier.height(4.dp))
+                HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f))
+                Spacer(Modifier.height(4.dp))
+
+                if (subtitleTracks.isEmpty()) {
+                    Text(
+                        "No captions available for this video.",
+                        color = c.onSurfaceVariant,
+                        fontSize = 13.5.sp,
+                        modifier = Modifier.padding(vertical = 12.dp),
+                    )
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        subtitleTracks.forEach { track ->
+                            val selected = player.selectedSubtitleLanguage == track.code && player.subtitleTranslation == null
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .pressable {
+                                        player.setSubtitleLanguage(track.code, track.url)
+                                        onDismiss()
+                                    }
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (selected) c.surfaceContainerHigh else Color.Transparent)
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Subtitles,
+                                    contentDescription = null,
+                                    tint = if (selected) c.primary else c.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Text(track.label, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = c.onSurface, modifier = Modifier.weight(1f))
+                                if (selected) {
+                                    Icon(Icons.Rounded.Check, contentDescription = "Selected", tint = c.primary, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+                    HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f))
+                    Spacer(Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .pressable {
+                                languageQuery = ""
+                                translating = true
+                            }
+                            .clip(RoundedCornerShape(10.dp))
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Rounded.Translate, contentDescription = null, tint = c.primary, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Translate captions", fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp, color = c.onSurface)
+                            Text(
+                                player.subtitleTranslation?.let { "Translated: ${CaptionLanguages.nameFor(it)}" }
+                                    ?: "All ${CaptionLanguages.all.size} languages",
+                                fontSize = 11.5.sp,
+                                color = c.onSurfaceVariant,
+                            )
                         }
                     }
                 }
