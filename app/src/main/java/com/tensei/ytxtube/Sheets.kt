@@ -501,8 +501,11 @@ fun SubtitlesSheet(
                         Column(Modifier.weight(1f)) {
                             Text("Translate captions", fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp, color = c.onSurface)
                             Text(
-                                player.subtitleTranslation?.let { "Translated: ${CaptionLanguages.nameFor(it)}" }
-                                    ?: "All ${CaptionLanguages.all.size} languages",
+                                when {
+                                    player.subtitleTranslating -> "Translating…"
+                                    player.subtitleTranslation != null -> "Translated: ${CaptionLanguages.nameFor(player.subtitleTranslation!!)}"
+                                    else -> "All ${CaptionLanguages.all.size} languages"
+                                },
                                 fontSize = 11.5.sp,
                                 color = c.onSurfaceVariant,
                             )

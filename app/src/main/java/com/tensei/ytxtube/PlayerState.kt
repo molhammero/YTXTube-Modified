@@ -740,8 +740,14 @@ class PlayerState(private val scope: CoroutineScope) {
     var subtitleTranslation by mutableStateOf<String?>(null)
         private set
 
+    /** True while the original cues are being translated, so the player can show progress. */
+    var subtitleTranslating by mutableStateOf(false)
+        private set
+
     private var activeCues by mutableStateOf<List<ParsedCue>>(emptyList())
     private var subtitleFetchJob: kotlinx.coroutines.Job? = null
+    private var activeCaptionKey: String? = null
+    private var fetchingCaptionKey: String? = null
 
     fun setSubtitleLanguage(code: String?, trackUrl: String? = null, translation: String? = null) {
         selectedSubtitleLanguage = code
@@ -750,10 +756,13 @@ class PlayerState(private val scope: CoroutineScope) {
             translation != null -> subtitleTranslation = translation
             trackUrl != null -> subtitleTranslation = null
         }
-        subtitleFetchJob?.cancel()
         val p = controller
         try {
             if (code == null) {
+                subtitleFetchJob?.cancel()
+                activeCaptionKey = null
+                fetchingCaptionKey = null
+                subtitleTranslating = false
                 p?.trackSelectionParameters = p?.trackSelectionParameters
                     ?.buildUpon()
                     ?.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
@@ -776,17 +785,69 @@ class PlayerState(private val scope: CoroutineScope) {
 
         val videoId = current?.id ?: return
         val rawUrl = trackUrl ?: captionUrl(videoId, code)
-        val url = rawUrl?.let { source ->
-            subtitleTranslation?.let { target -> translatedCaptionUrl(source, target) } ?: source
+        val target = subtitleTranslation
+        val key = "$videoId|$code|${target.orEmpty()}"
+
+        // refreshTracks() and a media transition ask for the same captions again; do not
+        // cancel the running fetch or translate twice for them.
+        if (key == activeCaptionKey && activeCues.isNotEmpty()) {
+            subtitleTranslating = false
+            return
+        }
+        if (key == fetchingCaptionKey && subtitleFetchJob?.isActive == true) return
+        subtitleFetchJob?.cancel()
+
+        if (rawUrl == null) {
+            subtitleTranslating = false
+            activeCues = emptyList()
+            activeCaptionKey = null
+            captionText = null
+            actionMessage = "No captions found for this video"
+            return
         }
 
-        if (url != null) {
-            subtitleFetchJob = scope.launch(Dispatchers.IO) {
-                val cues = SubtitleParser.fetchAndParse(url)
-                withContext(Dispatchers.Main) {
+        fetchingCaptionKey = key
+        subtitleTranslating = target != null
+        subtitleFetchJob = scope.launch(Dispatchers.IO) {
+            // YouTube blocks its own translated tracks (tlang) with 429, so fetch the
+            // original cues once and translate their text locally while keeping timings.
+            val baseCues = SubtitleParser.fetchAndParse(rawUrl)
+            val translated = if (target != null && baseCues.isNotEmpty()) {
+                runCatching { CaptionTranslator.translate(baseCues, target) }
+            } else {
+                Result.success(baseCues)
+            }
+            withContext(Dispatchers.Main) {
+                if (fetchingCaptionKey == key) fetchingCaptionKey = null
+                subtitleTranslating = false
+
+                if (baseCues.isEmpty()) {
+                    activeCues = emptyList()
+                    activeCaptionKey = null
+                    captionText = null
+                    actionMessage = "No caption text found for this video"
+                    return@withContext
+                }
+
+                translated.onSuccess { cues ->
                     activeCues = cues
+                    activeCaptionKey = key
                     val pos = controller?.currentPosition ?: 0L
                     captionText = cues.firstOrNull { pos in it.startMs..it.endMs }?.text
+                    if (target != null) {
+                        actionMessage = "Translated captions: ${CaptionLanguages.nameFor(target)}"
+                    }
+                }.onFailure { error ->
+                    // Never leave the screen silent: fall back to the original captions
+                    // and clear the translation marker so the UI reflects what is shown.
+                    activeCues = baseCues
+                    activeCaptionKey = "$videoId|$code|"
+                    val pos = controller?.currentPosition ?: 0L
+                    captionText = baseCues.firstOrNull { pos in it.startMs..it.endMs }?.text
+                    subtitleTranslation = null
+                    actionMessage = "Translation unavailable; showing the original captions"
+                    Log.w(TAG, "caption translation failed", error)
+                    WatchSyncLog.note("caption translation failed: ${error.message ?: error.javaClass.simpleName}")
                 }
             }
         }
@@ -820,20 +881,6 @@ class PlayerState(private val scope: CoroutineScope) {
             ?: CaptionTracks.get(videoId)?.firstOrNull { it.languageTag == code }?.url
     }
 
-    /**
-     * Ask YouTube's timedtext endpoint for the same track machine-translated into [target].
-     * Any existing tlang is replaced so switching languages does not stack parameters.
-     */
-    private fun translatedCaptionUrl(source: String, target: String): String {
-        val cleaned = source
-            .replace(Regex("([?&])tlang=[^&]*"), "${'$'}1")
-            .replace("?&", "?")
-            .replace("&&", "&")
-            .trimEnd('?', '&')
-        val separator = if ('?' in cleaned) '&' else '?'
-        return "$cleaned${separator}tlang=$target"
-    }
-
     /** Translate the current (or first available) caption track into [target]. */
     fun translateSubtitles(target: String) {
         val videoId = current?.id ?: return
@@ -843,8 +890,17 @@ class PlayerState(private val scope: CoroutineScope) {
             actionMessage = "No captions to translate"
             return
         }
+        if (baseCode == target) {
+            setSubtitleLanguage(baseCode, baseUrl)
+            actionMessage = "Captions are already in ${CaptionLanguages.nameFor(target)}"
+            return
+        }
+        if (subtitleTranslation == target && activeCues.isNotEmpty()) {
+            actionMessage = "Already translated: ${CaptionLanguages.nameFor(target)}"
+            return
+        }
         setSubtitleLanguage(baseCode, baseUrl, translation = target)
-        actionMessage = "Translated captions: ${CaptionLanguages.nameFor(target)}"
+        actionMessage = "Translating captions: ${CaptionLanguages.nameFor(target)}"
     }
 
     fun retry() = current?.let { item -> StreamCache.invalidate(item.id); current = null; open(item) }
