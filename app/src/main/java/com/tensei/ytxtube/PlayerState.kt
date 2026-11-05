@@ -220,6 +220,13 @@ class PlayerState(private val scope: CoroutineScope) {
 
     private var pendingStart: VideoItem? = null
 
+    // Comments, account data and HDR are deliberately fetched only after the player
+    // has a source. They used to compete with the stream request while a video opened.
+    private var pendingCommentsId: String? = null
+    private var commentsLoadedId: String? = null
+    private var extrasLoadedId: String? = null
+    private var hdrLoadedId: String? = null
+
 
 
 
@@ -294,6 +301,10 @@ class PlayerState(private val scope: CoroutineScope) {
         loading = true
         sheet = null
         comments.clearFor(item.id)
+        pendingCommentsId = null
+        commentsLoadedId = null
+        extrasLoadedId = null
+        hdrLoadedId = null
         liveChat.stop()
         accountState = null
         inWatchLater = false
@@ -320,13 +331,6 @@ class PlayerState(private val scope: CoroutineScope) {
             if (startPlayback) startPlayback(item)
             return
         }
-        if (Account.signedIn) {
-            scope.launch {
-                runCatching { InnerTube.videoState(item.id) }
-                    .onSuccess { if (current?.id == item.id) { accountState = it; originalLike = it.like } }
-                    .onFailure { Log.w(TAG, "account state for ${item.id}", it) }
-            }
-        }
         loadJob?.cancel()
         loadJob = scope.launch {
             runCatching { YouTube.details(item.id) }
@@ -338,23 +342,22 @@ class PlayerState(private val scope: CoroutineScope) {
                     if (!aspectFromFrames) d.aspect?.let { videoAspect = it }
 
 
-                    comments.load(item.id)
                     known[item.id] = d.item
                     d.related.forEach { known[it.id] = it }
-                    if (!d.playable) error = "No playable stream was found for this video."
-                    else if (startPlayback) startPlayback(d.item)
-
-                    scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                        val dislikes = fetchDislikeCount(item.id)
-                        if (current?.id == item.id && dislikes >= 0) {
-                            details = details?.copy(dislikes = dislikes)
-                        }
+                    if (!d.playable) {
+                        error = "No playable stream was found for this video."
+                        commentsLoadedId = item.id
+                        comments.load(item.id)
+                    } else {
+                        pendingCommentsId = item.id
+                        if (startPlayback) startPlayback(d.item) else maybeStartComments()
                     }
                 }
                 .onFailure {
                     Log.w(TAG, "details failed for ${item.id}", it)
                     error = YouTube.friendlyError(it)
 
+                    commentsLoadedId = item.id
                     comments.load(item.id)
                 }
             loading = false
@@ -396,6 +399,60 @@ class PlayerState(private val scope: CoroutineScope) {
         player.play()
         if (selectedSubtitleLanguage != null) setSubtitleLanguage(selectedSubtitleLanguage)
         refreshTracks()
+        maybeStartComments()
+    }
+
+    /** Load comments only after the video has a ready source, not alongside extraction. */
+    private fun maybeStartComments() {
+        val id = pendingCommentsId ?: return
+        if (current?.id != id) return
+        val player = controller ?: return
+        if (player.currentMediaItem?.mediaId != id) return
+        val ready = isPlaying || player.playbackState == Player.STATE_READY
+        if (!ready) return
+        pendingCommentsId = null
+        if (commentsLoadedId == id) return
+        commentsLoadedId = id
+        comments.load(id)
+        requestVideoExtras(id)
+    }
+
+    /** Account state and dislikes are low priority; start them after the video is ready. */
+    private fun requestVideoExtras(id: String) {
+        if (extrasLoadedId == id) return
+        extrasLoadedId = id
+        if (Account.signedIn) {
+            scope.launch {
+                runCatching { InnerTube.videoState(id) }
+                    .onSuccess { if (current?.id == id) { accountState = it; originalLike = it.like } }
+                    .onFailure { Log.w(TAG, "account state for $id", it) }
+            }
+        }
+        scope.launch(Dispatchers.IO) {
+            val dislikes = runCatching { fetchDislikeCount(id) }.getOrDefault(-1)
+            if (dislikes >= 0) {
+                withContext(Dispatchers.Main) {
+                    if (current?.id == id) details = details?.copy(dislikes = dislikes)
+                }
+            }
+        }
+    }
+
+    /** HDR is optional and only matters when the quality sheet is opened. */
+    fun refreshHdr() {
+        val id = current?.id ?: return
+        if (hdrLoadedId == id) return
+        hdrLoadedId = id
+        scope.launch(Dispatchers.IO) {
+            val info = StreamCache.get(id) ?: return@launch
+            HdrFormats.prefetch(id)
+            HdrFormats.install(id, info)
+            val hdrHeights = StreamSelection.hdrHeights(info)
+            if (hdrHeights.isEmpty()) return@launch
+            withContext(Dispatchers.Main) {
+                if (current?.id == id) details = details?.copy(hdrQualities = hdrHeights)
+            }
+        }
     }
 
     
@@ -1105,10 +1162,12 @@ class PlayerState(private val scope: CoroutineScope) {
     internal val listener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) {
             syncFromPlayer()
+            if (isPlaying) maybeStartComments()
             if (events.contains(Player.EVENT_TIMELINE_CHANGED) || events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) rebuildQueue()
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
+            if (playbackState == Player.STATE_READY) maybeStartComments()
             if (playbackState == Player.STATE_ENDED) {
                 val p = controller ?: return
                 if (p.repeatMode == Player.REPEAT_MODE_ONE) return

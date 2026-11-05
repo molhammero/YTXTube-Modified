@@ -247,9 +247,9 @@ object YouTube {
     }
 
     suspend fun details(id: String): VideoDetails = withContext(Dispatchers.IO) {
-        HdrFormats.prefetch(id)
+        // Keep the first network pass focused on the stream. HDR is fetched lazily
+        // from the quality sheet after the video is ready.
         val info = StreamCache.getOrLoad(id)
-        HdrFormats.install(id, info)
         val picked = StreamSelection.pick(info)
         val isLive = info.streamType == StreamType.LIVE_STREAM
         VideoDetails(

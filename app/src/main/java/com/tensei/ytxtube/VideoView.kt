@@ -247,8 +247,8 @@ fun VideoContent(
             state.videoZoom = (state.videoZoom * zoomChange).coerceIn(1f, 4f)
         }
     }
-    LaunchedEffect(state.current?.id) {
-        state.current?.id?.let { ScrubStoryboards.preload(it) }
+    LaunchedEffect(state.current?.id, state.isPlaying) {
+        if (state.isPlaying) state.current?.id?.let { ScrubStoryboards.preload(it) }
     }
     val tvKeys = Modifier.onPreviewKeyEvent { e ->
         if (!TvMode.isTv || !interactive || e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -1002,6 +1002,7 @@ private fun SkippedNote(state: PlayerState, modifier: Modifier) {
 fun QualitySheet(state: PlayerState, onDismiss: () -> Unit) {
     val c = MaterialTheme.colorScheme
     val details = state.details ?: return
+    LaunchedEffect(Unit) { state.refreshHdr() }
     val chosen = QualityPreference.height
     val chosenHdr = QualityPreference.hdr
     ModalBottomSheet(
