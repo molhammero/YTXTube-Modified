@@ -31,7 +31,8 @@ class YTXTubeApplication : Application(), ImageLoaderFactory {
 
 
         val poTokenGenerator = PoTokenGenerator()
-        poTokenGenerator.initialize()
+        // Do not hold the generator lock while the app starts: the first video must not
+        // wait for a WebView that may be unable to finish BotGuard initialization.
         YoutubeStreamExtractor.setPoTokenProvider(YtxPoTokenProvider(poTokenGenerator))
 
 

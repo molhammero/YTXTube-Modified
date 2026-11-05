@@ -343,6 +343,7 @@ private constructor(
       return withContext(Dispatchers.Main) {
         suspendCancellableCoroutine { cont ->
           val potWv = PoTokenWebView(context, cont)
+          cont.invokeOnCancellation { potWv.close() }
           potWv.loadHtmlAndObtainBotguard()
         }
       }

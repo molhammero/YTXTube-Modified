@@ -12,6 +12,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 
 class PoTokenGenerator {
   private val TAG = "PoTokenGenerator"
@@ -24,21 +25,33 @@ class PoTokenGenerator {
   private var webPoTokenStreamingPot: String? = null
   private var webPoTokenGenerator: PoTokenWebView? = null
 
+  /** A failed WebView must not make every video start pay the timeout again. */
+  @Volatile private var retryAfterMs = 0L
+
   fun initialize() {
     if (!webViewSupported || webViewBadImpl) return
     kotlinx.coroutines.GlobalScope.launch(Dispatchers.Main) {
       try {
-        webPoTokenGenLock.withLock {
-          if (webPoTokenGenerator == null) {
-            Log.d(TAG, "Pre-initializing PoTokenWebView in background...")
-            webPoTokenSessionId = "init-" + System.currentTimeMillis()
-            webPoTokenGenerator =
-              PoTokenWebView.getNewPoTokenGenerator(YTXTubeApplication.appContext)
-            webPoTokenStreamingPot = webPoTokenGenerator!!.generatePoToken(webPoTokenSessionId!!)
+        val ready = withTimeoutOrNull(INIT_TIMEOUT_MS) {
+          webPoTokenGenLock.withLock {
+            if (webPoTokenGenerator == null) {
+              Log.d(TAG, "Pre-initializing PoTokenWebView in background...")
+              webPoTokenSessionId = "init-" + System.currentTimeMillis()
+              webPoTokenGenerator =
+                PoTokenWebView.getNewPoTokenGenerator(YTXTubeApplication.appContext)
+              webPoTokenStreamingPot = webPoTokenGenerator!!.generatePoToken(webPoTokenSessionId!!)
+            }
+            true
           }
+        }
+        if (ready == null) {
+          Log.w(TAG, "PoTokenWebView initialization timed out; deferring token generation")
+          retryAfterMs = System.currentTimeMillis() + RETRY_COOLDOWN_MS
+          closeGeneratorBestEffort()
         }
       } catch (e: Exception) {
         Log.e(TAG, "Failed to pre-initialize PoTokenWebView", e)
+        retryAfterMs = System.currentTimeMillis() + RETRY_COOLDOWN_MS
       }
     }
   }
@@ -50,28 +63,24 @@ class PoTokenGenerator {
       Log.d(TAG, "WebView not available: supported=$webViewSupported, badImpl=$webViewBadImpl")
       return null
     }
+    if (System.currentTimeMillis() < retryAfterMs) {
+      Log.d(TAG, "Skipping PoToken during cooldown")
+      return null
+    }
 
     return try {
       Log.d(TAG, "Calling runBlocking to generate poToken (timeout=${POTOKEN_TIMEOUT_MS}ms)...")
-      runBlocking {
+      val result = runBlocking {
         withTimeout(POTOKEN_TIMEOUT_MS) {
           getWebClientPoToken(videoId, sessionId, forceRecreate = false)
         }
       }
+      retryAfterMs = 0L
+      result
     } catch (e: TimeoutCancellationException) {
       Log.w(TAG, "poToken generation timed out after ${POTOKEN_TIMEOUT_MS}ms; proceeding without PoToken")
-      runBlocking {
-        webPoTokenGenLock.withLock {
-          try {
-            withContext(Dispatchers.Main) { webPoTokenGenerator?.close() }
-          } catch (closeEx: Exception) {
-            Log.e(TAG, "Exception closing PoTokenWebView during timeout cleanup", closeEx)
-          }
-          webPoTokenGenerator = null
-          webPoTokenStreamingPot = null
-          webPoTokenSessionId = null
-        }
-      }
+      retryAfterMs = System.currentTimeMillis() + RETRY_COOLDOWN_MS
+      closeGeneratorBestEffort()
       null
     } catch (e: Exception) {
       Log.e(TAG, "poToken generation exception: ${e.javaClass.simpleName}: ${e.message}", e)
@@ -86,8 +95,29 @@ class PoTokenGenerator {
     }
   }
 
+  /** Never wait for the generator lock without a bound: initialization may own it. */
+  private fun closeGeneratorBestEffort() {
+    runBlocking {
+      withTimeoutOrNull(CLEANUP_TIMEOUT_MS) {
+        webPoTokenGenLock.withLock {
+          try {
+            withContext(Dispatchers.Main) { webPoTokenGenerator?.close() }
+          } catch (closeEx: Exception) {
+            Log.e(TAG, "Exception closing PoTokenWebView during timeout cleanup", closeEx)
+          }
+          webPoTokenGenerator = null
+          webPoTokenStreamingPot = null
+          webPoTokenSessionId = null
+        }
+      }
+    }
+  }
+
   private companion object {
-    const val POTOKEN_TIMEOUT_MS = 8_000L
+    const val POTOKEN_TIMEOUT_MS = 5_000L
+    const val INIT_TIMEOUT_MS = 5_000L
+    const val CLEANUP_TIMEOUT_MS = 750L
+    const val RETRY_COOLDOWN_MS = 30_000L
   }
 
   private suspend fun getWebClientPoToken(
