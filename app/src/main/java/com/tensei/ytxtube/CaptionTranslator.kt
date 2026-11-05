@@ -10,12 +10,13 @@ import java.io.IOException
 
 /**
  * YouTube refuses server-side caption translation (`tlang`) with HTTP 429 even when the
- * original track downloads normally. So translated captions are built here instead: the
- * original cues keep their exact timings and only their text is translated.
+ * original track downloads normally. Google's translate_a/single host is also blocked on
+ * some mobile networks, so this uses the dict-chrome endpoint that stays reachable there.
+ * The original cues keep their exact timings and only their text is translated.
  */
 object CaptionTranslator {
     private const val TAG = "CaptionTranslator"
-    private const val ENDPOINT = "https://translate.googleapis.com/translate_a/single"
+    private const val ENDPOINT = "https://clients5.google.com/translate_a/t"
     private const val MAX_CHARS = 1_500
     private const val MAX_CUES = 25
     private const val MAX_ATTEMPTS = 3
@@ -95,10 +96,9 @@ object CaptionTranslator {
     private fun requestOnce(text: String, lang: String): String {
         val base = ENDPOINT.toHttpUrlOrNull() ?: throw IOException("Bad translation endpoint")
         val url = base.newBuilder()
-            .addQueryParameter("client", "gtx")
+            .addQueryParameter("client", "dict-chrome-ex")
             .addQueryParameter("sl", "auto")
             .addQueryParameter("tl", lang)
-            .addQueryParameter("dt", "t")
             .addQueryParameter("q", text)
             .build()
         val req = Request.Builder()
@@ -110,15 +110,13 @@ object CaptionTranslator {
             val body = response.body?.string().orEmpty()
             val root = runCatching { JSONArray(body) }.getOrNull()
                 ?: throw IOException("Unexpected translation response")
-            val segments = root.optJSONArray(0)
-                ?: throw IOException("Unexpected translation response")
-            val out = StringBuilder()
-            for (i in 0 until segments.length()) {
-                val segment = segments.optJSONArray(i) ?: continue
-                out.append(segment.optString(0))
+            val translated = when (val first = root.opt(0)) {
+                is JSONArray -> first.optString(0)
+                is String -> first
+                else -> throw IOException("Unexpected translation response")
             }
-            if (out.isEmpty()) throw IOException("Empty translation response")
-            return out.toString()
+            if (translated.isEmpty()) throw IOException("Empty translation response")
+            return translated
         }
     }
 
