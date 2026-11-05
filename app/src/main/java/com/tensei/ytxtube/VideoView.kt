@@ -712,7 +712,7 @@ fun VideoContent(
             }
         }
 
-        val captionText = if (state.subtitleTranslating) "Translating captions…" else state.captionText
+        val captionText = state.captionText ?: if (state.subtitleTranslating) "Translating captions…" else null
         if (!scrubbing && captionText != null) {
             val captionLift by animateDpAsState(
                 targetValue = if (controlsVisible) EdgeScrubTimeRowBottomPad + EdgeScrubTimeRowHeight + 10.dp else 20.dp,

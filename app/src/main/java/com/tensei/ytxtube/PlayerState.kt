@@ -833,7 +833,7 @@ class PlayerState(private val scope: CoroutineScope) {
                     activeCues = cues
                     activeCaptionKey = key
                     val pos = controller?.currentPosition ?: 0L
-                    captionText = cues.firstOrNull { pos in it.startMs..it.endMs }?.text
+                    captionText = captionAt(cues, pos)
                     if (target != null) {
                         actionMessage = "Translated captions: ${CaptionLanguages.nameFor(target)}"
                     }
@@ -843,7 +843,7 @@ class PlayerState(private val scope: CoroutineScope) {
                     activeCues = baseCues
                     activeCaptionKey = "$videoId|$code|"
                     val pos = controller?.currentPosition ?: 0L
-                    captionText = baseCues.firstOrNull { pos in it.startMs..it.endMs }?.text
+                    captionText = captionAt(baseCues, pos)
                     subtitleTranslation = null
                     actionMessage = "Translation unavailable; showing the original captions"
                     Log.w(TAG, "caption translation failed", error)
@@ -1080,6 +1080,10 @@ class PlayerState(private val scope: CoroutineScope) {
         }
     }
 
+    /** The latest active cue wins when a track has overlapping rolling cues. */
+    private fun captionAt(cues: List<ParsedCue>, position: Long): String? =
+        cues.lastOrNull { position >= it.startMs && position <= it.endMs }?.text
+
     internal fun syncFromPlayer() {
         val player = controller ?: return
         isPlaying = player.isPlaying
@@ -1092,8 +1096,7 @@ class PlayerState(private val scope: CoroutineScope) {
         loopEnabled = player.repeatMode == Player.REPEAT_MODE_ONE
 
         if (selectedSubtitleLanguage != null && activeCues.isNotEmpty()) {
-            val pos = positionMs
-            captionText = activeCues.firstOrNull { pos in it.startMs..it.endMs }?.text
+            captionText = captionAt(activeCues, positionMs)
         } else if (selectedSubtitleLanguage == null) {
             captionText = null
         }

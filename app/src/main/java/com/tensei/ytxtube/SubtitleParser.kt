@@ -33,12 +33,41 @@ object SubtitleParser {
     fun parse(raw: String): List<ParsedCue> {
         if (raw.isBlank()) return emptyList()
         val trimmed = raw.trim()
-        return when {
+        val cues = when {
             trimmed.startsWith("WEBVTT") || trimmed.contains("-->") -> parseVtt(trimmed)
             trimmed.contains("<p ") || trimmed.contains("<p>") -> parseTtml(trimmed)
             trimmed.contains("<text ") -> parseXml(trimmed)
             else -> emptyList()
         }
+        return normalizeRolling(cues)
+    }
+
+    /**
+     * YouTube's auto-generated captions roll: every cue starts with the text of the
+     * previous cue and appends the next line. Keeping that repeat makes a translated
+     * line show the previous sentence for several seconds. Strip the repeated prefix
+     * and keep the original timestamps of the cue that actually introduced the line.
+     */
+    private fun normalizeRolling(cues: List<ParsedCue>): List<ParsedCue> {
+        if (cues.size < 2) return cues
+        val out = ArrayList<ParsedCue>(cues.size)
+        var previous = emptyList<String>()
+        for (cue in cues) {
+            val lines = cue.text.lines().map { it.trim() }.filter { it.isNotEmpty() }
+            if (lines.isEmpty()) continue
+
+            var drop = 0
+            val common = minOf(previous.size, lines.size)
+            while (drop < common && lines[drop] == previous[drop]) drop++
+            // Some tracks repeat only the previous bottom line before the new one.
+            if (drop == 0 && previous.isNotEmpty() && lines.first() == previous.last()) drop = 1
+
+            val fresh = lines.drop(drop)
+            if (fresh.isEmpty()) continue
+            out += cue.copy(text = fresh.joinToString("\n"))
+            previous = fresh
+        }
+        return out
     }
 
     private fun cleanText(text: String): String {
