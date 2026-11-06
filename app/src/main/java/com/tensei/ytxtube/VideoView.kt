@@ -242,6 +242,7 @@ fun VideoContent(
     val fullscreenControlsScrub = fullscreen && !portraitEdgeScrub
     val scrubbing = state.scrubDragging
     val scrubPreviewMs = state.scrubPreviewMs
+    val scrubChapter = if (scrubbing) scrubPreviewMs?.let { state.chapterAt(it) } else null
     val zoomState = rememberTransformableState { zoomChange, _, _ ->
         if (interactive) {
             state.videoZoom = (state.videoZoom * zoomChange).coerceIn(1f, 4f)
@@ -467,6 +468,44 @@ fun VideoContent(
                         state.current?.id,
                         scrubPreviewMs,
                         Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+        scrubChapter?.let { chapter ->
+            val chapterIndex = state.chapters.indexOfFirst { it.startMs == chapter.startMs }
+            val chapterEndMs = state.chapters.getOrNull(chapterIndex + 1)?.startMs ?: state.durationMs
+            Box(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .then(if (fullscreen) Modifier.statusBarsPadding() else Modifier)
+                    .padding(top = 16.dp, start = 20.dp, end = 20.dp)
+                    .zIndex(12f)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color.Black.copy(alpha = 0.8f))
+                    .padding(horizontal = 18.dp, vertical = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        "Chapter ${chapterIndex + 1} of ${state.chapters.size}",
+                        color = Color.White.copy(alpha = 0.65f),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        chapter.title,
+                        color = Color.White,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        "${formatDuration(chapter.startMs)} – ${formatDuration(chapterEndMs)}",
+                        color = Color.White.copy(alpha = 0.65f),
+                        fontSize = 11.sp,
                     )
                 }
             }
