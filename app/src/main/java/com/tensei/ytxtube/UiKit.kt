@@ -604,11 +604,17 @@ fun formatStatCount(n: Long): String = when {
 private const val URL_ANNOTATION = "ytx-url"
 
 private fun openInBrowser(context: Context, url: String): Boolean {
+    val browserProbe = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com"))
+        .addCategory(Intent.CATEGORY_BROWSABLE)
     val browser = context.packageManager
-        .queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_BROWSER), 0)
-        .asSequence()
-        .mapNotNull { it.activityInfo?.packageName }
-        .firstOrNull { it != context.packageName }
+        .resolveActivity(browserProbe, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
+        ?.activityInfo?.packageName
+        ?.takeIf { it != context.packageName && it != "android" }
+        ?: context.packageManager
+            .queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_BROWSER), 0)
+            .asSequence()
+            .mapNotNull { it.activityInfo?.packageName }
+            .firstOrNull { it != context.packageName }
     val view = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE)
     return runCatching {
         if (browser != null) {
