@@ -121,7 +121,7 @@ object VideoGestureSettings {
  */
 @UnstableApi
 object MediaCache {
-    private const val MAX_BYTES = 320L * 1024L * 1024L
+    private const val MAX_BYTES = 1_536L * 1024L * 1024L
 
     @Volatile private var cache: SimpleCache? = null
     @Volatile private var factory: DataSource.Factory? = null
