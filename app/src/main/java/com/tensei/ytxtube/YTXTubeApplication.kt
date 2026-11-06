@@ -1,6 +1,7 @@
 package com.tensei.ytxtube
 
 import android.app.Application
+import android.content.ComponentCallbacks2
 import android.content.Context
 import coil.ImageLoader
 import coil.ImageLoaderFactory
@@ -12,6 +13,8 @@ import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.services.youtube.extractors.YoutubeStreamExtractor
 
 class YTXTubeApplication : Application(), ImageLoaderFactory {
+
+    private var appImageLoader: ImageLoader? = null
 
     companion object {
         lateinit var appContext: Context
@@ -70,6 +73,13 @@ class YTXTubeApplication : Application(), ImageLoaderFactory {
         )
     }
 
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            appImageLoader?.memoryCache?.clear()
+        }
+    }
+
 
     override fun newImageLoader(): ImageLoader = ImageLoader.Builder(this)
         .crossfade(180)
@@ -103,4 +113,5 @@ class YTXTubeApplication : Application(), ImageLoaderFactory {
                 .build()
         }
         .build()
+        .also { appImageLoader = it }
 }

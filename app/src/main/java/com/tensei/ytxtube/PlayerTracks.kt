@@ -117,11 +117,16 @@ object VideoGestureSettings {
 
 /**
  * Shared Media3 cache. A Short replayed or a video re-opened plays from disk instead of
- * re-downloading, which is what makes loops and swipe-backs feel instant.
+ * re-downloading, which is what makes loops and swipe-backs feel instant. The cache is
+ * capped at 1 GB, shrinks automatically when free storage is low, and evicts the
+ * least-recently-used spans. Android's Clear cache action removes this directory; the
+ * app deliberately does not wipe it on exit.
  */
 @UnstableApi
 object MediaCache {
-    private const val MAX_BYTES = 1_536L * 1024L * 1024L
+    private const val MIN_BYTES = 128L * 1024L * 1024L
+    private const val MAX_BYTES = 1_024L * 1024L * 1024L
+    private const val RESERVE_BYTES = 256L * 1024L * 1024L
 
     @Volatile private var cache: SimpleCache? = null
     @Volatile private var factory: DataSource.Factory? = null
@@ -132,7 +137,7 @@ object MediaCache {
         return runCatching {
             SimpleCache(
                 File(context.cacheDir, "media"),
-                LeastRecentlyUsedCacheEvictor(MAX_BYTES),
+                LeastRecentlyUsedCacheEvictor(limit(context)),
                 StandaloneDatabaseProvider(context),
             ).also { cache = it }
         }.getOrNull()
@@ -155,6 +160,12 @@ object MediaCache {
         }.getOrNull() ?: upstream
         factory = made
         return made
+    }
+
+    private fun limit(context: Context): Long {
+        val free = runCatching { context.cacheDir.usableSpace }.getOrDefault(0L)
+        if (free <= 0L) return MAX_BYTES
+        return (free - RESERVE_BYTES).coerceIn(MIN_BYTES, MAX_BYTES)
     }
 
     fun release() {
