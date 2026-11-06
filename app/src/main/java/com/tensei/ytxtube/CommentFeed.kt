@@ -183,4 +183,18 @@ object ChannelAvatars {
             }
         }
     }
+
+    fun resolvePost(scope: CoroutineScope, post: CommunityPost) {
+        val id = post.channelId ?: return
+        if (post.avatar != null || id in known || !asked.add(id)) return
+        scope.launch {
+            gate.withPermit {
+                withContext(Dispatchers.IO) {
+                    runCatching { InnerTube.channelAvatarUrl(id) }
+                        .onSuccess { url -> if (url != null) known[id] = normalizeChannelAvatarUrl(url) }
+                        .onFailure { asked.remove(id) }
+                }
+            }
+        }
+    }
 }

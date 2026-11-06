@@ -42,6 +42,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -661,6 +662,13 @@ fun communityImageOriginal(url: String?): String? {
 fun CommunityCard(post: CommunityPost, modifier: Modifier = Modifier) {
     val c = MaterialTheme.colorScheme
     val scope = rememberCoroutineScope()
+    val openChannel = LocalChannelOpener.current
+    val channelUrl = post.channelUrl ?: post.channelId?.let { "https://www.youtube.com/channel/$it" }
+    val avatar = post.channelId?.let { ChannelAvatars.known[it] } ?: post.avatar
+    LaunchedEffect(post.channelId, post.avatar) {
+        ChannelAvatars.resolvePost(scope, post)
+    }
+    val openPostChannel: () -> Unit = { channelUrl?.let(openChannel) }
     val liked = postLikeOverrides[post.id] ?: post.liked
     var liking by remember(post.id) { mutableStateOf(false) }
     var viewing by remember(post.id) { mutableStateOf(false) }
@@ -670,10 +678,21 @@ fun CommunityCard(post: CommunityPost, modifier: Modifier = Modifier) {
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            ChannelAvatar(post.avatar, post.author, size = 36)
+            Box(
+                Modifier.pressable(enabled = channelUrl != null) { openPostChannel() },
+            ) {
+                ChannelAvatar(avatar, post.author, size = 36)
+            }
             Spacer(Modifier.width(10.dp))
             Column {
-                Text(post.author, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Text(
+                    post.author,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    modifier = Modifier
+                        .pressable(enabled = channelUrl != null) { openPostChannel() }
+                        .padding(vertical = 1.dp),
+                )
                 post.published?.let {
                     Text(it, color = c.onSurfaceVariant, fontSize = 12.sp)
                 }

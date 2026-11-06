@@ -80,6 +80,8 @@ data class CommunityPost(
     val id: String,
     val author: String,
     val avatar: String?,
+    val channelId: String? = null,
+    val channelUrl: String? = null,
     val text: String,
     val image: String?,
     val published: String?,
@@ -467,7 +469,14 @@ object YouTube {
     }
 
     suspend fun channelCommunity(channel: ChannelDetails, token: String?): CommunityPage {
-        return InnerTube.channelCommunity(channel.id, token)
+        val page = InnerTube.channelCommunity(channel.id, token)
+        return page.copy(posts = page.posts.map { post ->
+            post.copy(
+                channelId = post.channelId ?: channel.id,
+                channelUrl = post.channelUrl ?: channel.url,
+                avatar = post.avatar ?: channel.avatar,
+            )
+        })
     }
 
     private fun StreamInfoItem.toVideoItem(): VideoItem? {

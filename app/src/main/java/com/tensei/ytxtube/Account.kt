@@ -1701,7 +1701,14 @@ object InnerTube {
                 channelIds.map { id ->
                     async {
                         runCatching {
-                            kotlinx.coroutines.withTimeout(6000) { channelCommunity(id).posts.firstOrNull() }
+                            kotlinx.coroutines.withTimeout(6000) {
+                                channelCommunity(id).posts.firstOrNull()?.let { post ->
+                                    post.copy(
+                                        channelId = post.channelId ?: id,
+                                        channelUrl = post.channelUrl ?: "https://www.youtube.com/channel/$id",
+                                    )
+                                }
+                            }
                         }.getOrNull()
                     }
                 }.map { it.await() }.filterNotNull().take(limit)
@@ -3067,8 +3074,14 @@ object InnerTube {
         val id = o.optString("postId").ifBlank { o.optString("id") }.ifBlank { return null }
         val text = o.text("contentText").orEmpty()
         val author = o.text("authorText").orEmpty()
-        val avatar = o.optJSONObject("authorThumbnail")?.thumbnails()?.lastOrNull()
-            ?: pickChannelAvatarUrl(o)
+        val channelId = postChannelId(o)
+        val avatar = (o.optJSONObject("authorThumbnail")?.thumbnails()?.lastOrNull()
+            ?: o.optString("authorThumbnail").takeIf { it.startsWith("http") || it.startsWith("//") }
+            ?: pickChannelAvatarUrl(o))
+            ?.trim()
+            ?.ifBlank { null }
+            ?.let(::absoluteChannelAvatarUrl)
+            ?.let(::normalizeChannelAvatarUrl)
         val attachment = o.optJSONObject("backstageAttachment")
         val image = attachment?.optJSONObject("backstageImageRenderer")
             ?.optJSONObject("image")?.thumbnails()?.lastOrNull()
@@ -3093,6 +3106,8 @@ object InnerTube {
             id = id,
             author = author,
             avatar = avatar,
+            channelId = channelId,
+            channelUrl = channelId?.let { "https://www.youtube.com/channel/$it" },
             text = text,
             image = image,
             published = published,
@@ -3101,6 +3116,27 @@ object InnerTube {
             likeAction = likeAction,
             unlikeAction = unlikeAction,
         )
+    }
+
+    private fun postChannelId(o: JSONObject): String? {
+        fun fromEndpoint(endpoint: JSONObject?): String? =
+            endpoint?.optJSONObject("browseEndpoint")?.optString("browseId")
+                ?.takeIf { it.startsWith("UC") }
+
+        fromEndpoint(o.optJSONObject("authorEndpoint"))?.let { return it }
+        fromEndpoint(o.optJSONObject("author")?.optJSONObject("navigationEndpoint"))?.let { return it }
+        val runs = o.optJSONObject("authorText")?.optJSONArray("runs")
+        for (i in 0 until (runs?.length() ?: 0)) {
+            fromEndpoint(runs?.optJSONObject(i)?.optJSONObject("navigationEndpoint"))
+                ?.let { return it }
+        }
+        return o.collectStrings("browseId").firstOrNull { it.startsWith("UC") }
+    }
+
+    private fun absoluteChannelAvatarUrl(url: String): String = when {
+        url.startsWith("//") -> "https:$url"
+        url.startsWith("/") -> "https://www.youtube.com$url"
+        else -> url
     }
 
     private fun pickChannelAvatarUrl(o: JSONObject): String? {

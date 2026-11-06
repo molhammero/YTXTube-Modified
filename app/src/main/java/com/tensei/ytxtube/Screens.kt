@@ -351,7 +351,16 @@ fun SubscriptionsScreen(
     LaunchedEffect(activeSubFilter, selectedChannelId) {
         if (activeSubFilter == SubFilter.Community && selectedChannel != null && channelCommunityPosts.isEmpty()) {
             loadingCommunity = true
-            channelCommunityPosts = runCatching { InnerTube.channelCommunity(selectedChannel.id).posts }.getOrDefault(emptyList())
+            val channel = selectedChannel
+            channelCommunityPosts = runCatching {
+                InnerTube.channelCommunity(channel.id).posts.map { post ->
+                    post.copy(
+                        channelId = post.channelId ?: channel.id,
+                        channelUrl = post.channelUrl ?: channel.url,
+                        avatar = post.avatar ?: channel.avatar,
+                    )
+                }
+            }.getOrDefault(emptyList())
             loadingCommunity = false
         }
     }
