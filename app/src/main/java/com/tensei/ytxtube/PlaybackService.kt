@@ -20,8 +20,6 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
-import androidx.media3.datasource.DefaultDataSource
-import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.dash.DashMediaSource
 import androidx.media3.exoplayer.dash.manifest.AdaptationSet
@@ -92,12 +90,12 @@ class PlaybackService : MediaSessionService() {
 
             .setLoadControl(
                 DefaultLoadControl.Builder()
-                    // Start after a quarter second, keep a 30 s runway and a 10 s rewind
-                    // buffer. The old 15 s/50 s/1 s policy is what made every open sit on
-                    // a spinner before the first frame.
+                    // Start after a quarter second, keep a 30 s forward runway and a
+                    // full minute of rewind buffer. The old 10 s back buffer made any
+                    // larger backward seek re-download from the network.
                     .setAllocator(androidx.media3.exoplayer.upstream.DefaultAllocator(true, 64 * 1024))
                     .setBufferDurationsMs(2_500, 30_000, 250, 750)
-                    .setBackBuffer(10_000, false)
+                    .setBackBuffer(60_000, true)
                     .setPrioritizeTimeOverSizeThresholds(true)
                     .build(),
             )
@@ -541,10 +539,9 @@ private class SponsorSkipper(private val player: ExoPlayer) : Player.Listener {
 
 @OptIn(UnstableApi::class)
 private class YouTubeMediaSourceFactory(context: Context) : MediaSource.Factory {
-    private val dataSourceFactory: DataSource.Factory = DefaultDataSource.Factory(
-        context,
-        OkHttpDataSource.Factory(Net.client).setUserAgent(Net.USER_AGENT),
-    )
+    // Use the shared disk cache so already-fetched bytes can satisfy a backward
+    // seek instead of downloading the same range from YouTube again.
+    private val dataSourceFactory: DataSource.Factory = MediaCache.dataSourceFactory(context)
     private val fallback = DefaultMediaSourceFactory(dataSourceFactory)
 
     override fun setDrmSessionManagerProvider(provider: DrmSessionManagerProvider): MediaSource.Factory =
