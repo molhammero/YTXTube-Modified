@@ -1810,7 +1810,7 @@ object InnerTube {
         val body = if (continuation != null) JSONObject().put("continuation", continuation)
         else JSONObject().put("browseId", channelId).put("params", CHANNEL_VIDEOS_TAB)
         val root = postAny("browse", body)
-        val page = parseFeed(root)
+        val page = parseFeed(root, preferFirstContinuation = true)
         val header = if (continuation == null) parseChannelHeader(root) else null
         FeedPage(page.videos, page.next, header)
     }
@@ -2829,7 +2829,7 @@ object InnerTube {
 
 
 
-    internal fun parseFeed(root: JSONObject): FeedPage {
+    internal fun parseFeed(root: JSONObject, preferFirstContinuation: Boolean = false): FeedPage {
         val videos = LinkedHashMap<String, VideoItem>()
         val entries = ArrayList<FeedEntry>()
         val posts = HashSet<String>()
@@ -2852,7 +2852,11 @@ object InnerTube {
 
 
                 "continuationItemRenderer", "continuationItemViewModel" ->
-                    obj.collectStrings("token").firstOrNull()?.let { next = it }
+                    obj.collectStrings("token").firstOrNull()?.let { token ->
+                        // A channel page also has continuation tokens in the header (description
+                        // and attribution). The first token is the video grid's continuation.
+                        if (next == null || !preferFirstContinuation) next = token
+                    }
             }
         }
         return FeedPage(videos.values.toList(), next, entries = entries)
@@ -3018,8 +3022,8 @@ object InnerTube {
             thumbnail = videoThumbnailUrl(o, id),
             avatar = avatar?.let { sharpenChannelAvatarUrl(absoluteUrl(it), 96) },
             durationSec = if (isLive) 0L else parseDuration(duration),
-            views = parseViews(o.text("viewCountText") ?: o.text("shortViewCountText") ?: infoRuns.firstOrNull { it.contains("view") || it.contains("watching") }),
-            uploaded = if (isLive) I18n.t("live_now", "Live") else (o.text("publishedTimeText") ?: infoRuns.firstOrNull { it.contains("ago") || it.contains("पहले") || it.contains("hace") || it.contains("назад") } ?: infoRuns.lastOrNull())?.let { I18n.translateTimeAgo(it) },
+            views = parseViews(o.text("viewCountText") ?: o.text("shortViewCountText") ?: infoRuns.firstOrNull { isViewsText(it) }),
+            uploaded = if (isLive) I18n.t("live_now", "Live") else (o.text("publishedTimeText") ?: infoRuns.firstOrNull { isRelativeTimeText(it) } ?: infoRuns.lastOrNull()?.takeIf { !isViewsText(it) })?.let { I18n.translateTimeAgo(it) },
             isLive = isLive,
         )
     }
@@ -3040,17 +3044,24 @@ object InnerTube {
             o.collectStrings("text").any { it.equals("LIVE", ignoreCase = true) } ||
             parts.any { it.contains("watching", ignoreCase = true) }
         val avatar = meta.bestChannelAvatarUrl()
-        val duration = o.optJSONObject("contentImage")?.collectStrings("text")?.firstOrNull { DURATION.matches(it) }
+        val duration = o.optJSONObject("contentImage")?.collectStrings("text")?.firstOrNull { DURATION.matches(it.trim()) }
+            ?: o.collectStrings("text").firstOrNull { DURATION.matches(it.trim()) }
+        val channelText = parts.firstOrNull {
+            !isViewsText(it) && !isRelativeTimeText(it) && !it.contains("watching", ignoreCase = true)
+        }.orEmpty()
+        val viewsText = parts.firstOrNull { isViewsText(it) || it.contains("watching", ignoreCase = true) }
+        val uploadedText = parts.firstOrNull { isRelativeTimeText(it) }
+            ?: parts.lastOrNull()?.takeIf { it != viewsText && it != channelText && !isViewsText(it) }
         return VideoItem(
             id = id,
             title = title,
-            channel = parts.firstOrNull { !it.contains("view") && !it.contains("ago") && !it.contains("watching") }.orEmpty(),
+            channel = channelText,
             channelUrl = o.collectStrings("browseId").firstOrNull { it.startsWith("UC") }?.let { "https://www.youtube.com/channel/$it" },
             thumbnail = videoThumbnailUrl(o, id),
             avatar = avatar?.let { sharpenChannelAvatarUrl(absoluteUrl(it), 96) },
             durationSec = if (isLive) 0L else parseDuration(duration),
-            views = parseViews(parts.firstOrNull { it.contains("view") || it.contains("watching") }),
-            uploaded = if (isLive) I18n.t("live_now", "Live") else (parts.firstOrNull { it.contains("ago") || it.contains("पहले") || it.contains("hace") || it.contains("назад") } ?: parts.getOrNull(2))?.let { I18n.translateTimeAgo(it) },
+            views = parseViews(viewsText),
+            uploaded = if (isLive) I18n.t("live_now", "Live") else uploadedText?.let { I18n.translateTimeAgo(it) },
             isLive = isLive,
         )
     }
@@ -3196,6 +3207,24 @@ object InnerTube {
         sharpenFeedThumbnail(pickBestThumbnailUrl(renderer)?.let(::absoluteUrl), videoId)
 
     private val DURATION = Regex("^\\d{1,2}(:\\d{2}){1,2}$")
+
+    private fun isViewsText(text: String): Boolean {
+        val t = text.lowercase()
+        return Regex("\\bviews?\\b|\\bwatching\\b", RegexOption.IGNORE_CASE).containsMatchIn(t) ||
+            listOf(
+                "مشاهد", "مشاهدة", "مشاهدات",
+                "vistas", "visualiza", "просмотр", "조회", "再生", "görüntüle", "lượt xem", "दृश्य", "देखा",
+            ).any { t.contains(it) }
+    }
+
+    private fun isRelativeTimeText(text: String): Boolean {
+        val t = text.lowercase()
+        return Regex("\\bago\\b", RegexOption.IGNORE_CASE).containsMatchIn(t) ||
+            listOf(
+                "قبل", "منذ", "पहले", "hace", "назад", "前", "전", "önce",
+                "trước", "আগে", "पूर्वी",
+            ).any { t.contains(it) }
+    }
 
     private fun parseDuration(text: String?): Long {
         val t = text?.trim() ?: return 0

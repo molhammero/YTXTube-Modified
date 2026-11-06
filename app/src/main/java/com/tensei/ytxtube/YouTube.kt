@@ -450,21 +450,21 @@ object YouTube {
         val page = InnerTube.channelVideos(channel.id, token)
 
         return page.copy(videos = page.videos.map {
-            it.copy(channel = it.channel.ifBlank { channel.name }, avatar = it.avatar ?: channel.avatar, channelUrl = it.channelUrl ?: channel.url)
+            it.copy(channel = channel.name, avatar = it.avatar ?: channel.avatar, channelUrl = it.channelUrl ?: channel.url)
         })
     }
 
     suspend fun channelLive(channel: ChannelDetails, token: String?): FeedPage {
         val page = InnerTube.channelLive(channel.id, token)
         return page.copy(videos = page.videos.map {
-            it.copy(channel = it.channel.ifBlank { channel.name }, avatar = it.avatar ?: channel.avatar, channelUrl = it.channelUrl ?: channel.url)
+            it.copy(channel = channel.name, avatar = it.avatar ?: channel.avatar, channelUrl = it.channelUrl ?: channel.url)
         })
     }
 
     suspend fun channelShorts(channel: ChannelDetails, token: String?): FeedPage {
         val page = InnerTube.channelShorts(channel.id, token)
         return page.copy(videos = page.videos.map {
-            it.copy(channel = it.channel.ifBlank { channel.name }, avatar = it.avatar ?: channel.avatar, channelUrl = it.channelUrl ?: channel.url)
+            it.copy(channel = channel.name, avatar = it.avatar ?: channel.avatar, channelUrl = it.channelUrl ?: channel.url)
         })
     }
 
