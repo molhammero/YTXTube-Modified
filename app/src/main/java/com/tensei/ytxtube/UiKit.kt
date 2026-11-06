@@ -1,5 +1,8 @@
 package com.tensei.ytxtube
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,6 +30,7 @@ import androidx.compose.foundation.layout.mandatorySystemGestures
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.FastForward
@@ -60,8 +64,13 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
@@ -69,7 +78,9 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import coil.compose.AsyncImage
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -588,6 +599,86 @@ fun formatStatCount(n: Long): String = when {
     n < 1_000_000 -> statCompact(n / 1_000.0, "K")
     n < 1_000_000_000 -> statCompact(n / 1_000_000.0, "M")
     else -> statCompact(n / 1_000_000_000.0, "B")
+}
+
+private const val URL_ANNOTATION = "ytx-url"
+
+private fun openInBrowser(context: Context, url: String): Boolean {
+    val browser = context.packageManager
+        .queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_BROWSER), 0)
+        .asSequence()
+        .mapNotNull { it.activityInfo?.packageName }
+        .firstOrNull { it != context.packageName }
+    val view = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE)
+    return runCatching {
+        if (browser != null) {
+            context.startActivity(Intent(view).setPackage(browser))
+        } else {
+            context.startActivity(Intent.createChooser(view, null))
+        }
+        true
+    }.getOrDefault(false)
+}
+
+private val URL_PATTERN = Regex(
+    """(?i)(?:(?:https?://|www\\.)[^\s<>"']+|(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+[a-z]{2,}(?:/[^\s<>"']*)?)""",
+)
+
+private fun linkifiedText(text: String, linkColor: Color): AnnotatedString = buildAnnotatedString {
+    append(text)
+    URL_PATTERN.findAll(text).forEach { match ->
+        val raw = match.value.trimEnd('.', ',', ';', ':', '!', '?', ')', ']', '}', '،', '؟')
+        if (raw.isBlank()) return@forEach
+        val start = match.range.first
+        val end = start + raw.length
+        val href = if (raw.startsWith("http://", true) || raw.startsWith("https://", true)) {
+            raw
+        } else {
+            "https://$raw"
+        }
+        addStringAnnotation(URL_ANNOTATION, href, start, end)
+        addStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline), start, end)
+    }
+}
+
+/** Text with clickable http(s), www. and bare-domain links opened by the system browser. */
+@Composable
+fun LinkedText(
+    text: String,
+    modifier: Modifier = Modifier,
+    color: Color = MaterialTheme.colorScheme.onSurface,
+    fontSize: TextUnit = TextUnit.Unspecified,
+    lineHeight: TextUnit = TextUnit.Unspecified,
+    fontWeight: FontWeight? = null,
+    maxLines: Int = Int.MAX_VALUE,
+    overflow: TextOverflow = TextOverflow.Clip,
+) {
+    val linkColor = MaterialTheme.colorScheme.primary
+    val annotated = remember(text, linkColor) { linkifiedText(text, linkColor) }
+    val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
+    ClickableText(
+        text = annotated,
+        modifier = modifier,
+        style = TextStyle(
+            color = color,
+            fontSize = fontSize,
+            lineHeight = lineHeight,
+            fontWeight = fontWeight,
+        ),
+        maxLines = maxLines,
+        overflow = overflow,
+        onClick = { offset ->
+            annotated.getStringAnnotations(URL_ANNOTATION, offset, offset)
+                .firstOrNull()
+                ?.item
+                ?.let { url ->
+                    if (!openInBrowser(context, url)) {
+                        runCatching { uriHandler.openUri(url) }
+                    }
+                }
+        },
+    )
 }
 
 @Composable

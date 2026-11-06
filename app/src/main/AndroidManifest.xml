@@ -17,6 +17,18 @@
     <uses-feature android:name="android.hardware.type.television" android:required="false" />
     <uses-feature android:name="android.hardware.gamepad" android:required="false" />
 
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.APP_BROWSER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+    </queries>
+
     <application
         android:name=".YTXTubeApplication"
         android:allowBackup="false"

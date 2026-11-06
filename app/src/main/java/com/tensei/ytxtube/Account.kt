@@ -3205,7 +3205,19 @@ object InnerTube {
 
 
     internal fun parseViews(text: String?): Long {
-        val t = text?.lowercase()?.replace(",", "")?.trim() ?: return -1
+        val normalized = buildString {
+            text?.forEach { c ->
+                append(
+                    when {
+                        c in '٠'..'٩' -> '0' + (c - '٠')
+                        c in '۰'..'۹' -> '0' + (c - '۰')
+                        else -> c
+                    },
+                )
+            }
+        }
+        val t = normalized.lowercase().replace(",", "").trim()
+        if (t.isEmpty()) return -1
         if (t.startsWith("no ") || t.startsWith("कोई ") || t.startsWith("sin ")) return 0
         if ("करोड़" in t || "cr" in t) {
             val num = Regex("([\\d.]+)").find(t)?.groupValues?.get(1)?.toDoubleOrNull() ?: return -1
@@ -3216,6 +3228,18 @@ object InnerTube {
             return (num * 100_000).toLong()
         }
         if ("हज़ार" in t) {
+            val num = Regex("([\\d.]+)").find(t)?.groupValues?.get(1)?.toDoubleOrNull() ?: return -1
+            return (num * 1_000).toLong()
+        }
+        if ("مليار" in t || "مليارات" in t) {
+            val num = Regex("([\\d.]+)").find(t)?.groupValues?.get(1)?.toDoubleOrNull() ?: return -1
+            return (num * 1_000_000_000).toLong()
+        }
+        if ("مليون" in t || "ملايين" in t) {
+            val num = Regex("([\\d.]+)").find(t)?.groupValues?.get(1)?.toDoubleOrNull() ?: return -1
+            return (num * 1_000_000).toLong()
+        }
+        if ("ألف" in t || "آلاف" in t) {
             val num = Regex("([\\d.]+)").find(t)?.groupValues?.get(1)?.toDoubleOrNull() ?: return -1
             return (num * 1_000).toLong()
         }
@@ -3234,7 +3258,8 @@ object InnerTube {
         fun noteLine(line: String?) {
             val t = line?.trim()?.ifBlank { null } ?: return
             val lower = t.lowercase()
-            if (subsText == null && "subscriber" in lower) subsText = t
+            val subscriberWord = "subscriber" in lower || "مشترك" in lower || "متابع" in lower
+            if (subsText == null && subscriberWord && Regex("[\\d٠-٩۰-۹]").containsMatchIn(t)) subsText = t
             if (videosText == null) {
                 VIDEO_COUNT_IN_LINE.find(lower)?.value?.let { videosText = it }
             }
@@ -3294,7 +3319,7 @@ object InnerTube {
         style == "BADGE_STYLE_TYPE_VERIFIED" || style == "BADGE_STYLE_TYPE_VERIFIED_ARTIST"
 
     private val VERIFIED_CHANNEL_LABEL = Regex("verified|official artist", RegexOption.IGNORE_CASE)
-    private val VIDEO_COUNT_IN_LINE = Regex("""[\d,.]+[kmb]?\s+videos\b""", RegexOption.IGNORE_CASE)
+    private val VIDEO_COUNT_IN_LINE = Regex("""[\d,.]+[kmb]?\s+(?:videos|فيديو|فيديوهات)""", RegexOption.IGNORE_CASE)
 }
 
 

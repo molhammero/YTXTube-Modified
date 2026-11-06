@@ -1970,7 +1970,7 @@ private fun VideoDetailsBlock(
             }
         }
         if (descriptionOpen && details != null) {
-            Text(
+            LinkedText(
                 details.description,
                 modifier = Modifier.padding(top = 10.dp),
                 color = c.onSurfaceVariant,

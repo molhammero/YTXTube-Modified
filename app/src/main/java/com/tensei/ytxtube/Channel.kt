@@ -361,7 +361,14 @@ fun ChannelScreen(
                         }
                         if (d.description.isNotBlank()) {
                             Spacer(Modifier.height(12.dp))
-                            Text(d.description, color = c.onSurfaceVariant, fontSize = 13.5.sp, lineHeight = 19.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                            LinkedText(
+                                d.description,
+                                color = c.onSurfaceVariant,
+                                fontSize = 13.5.sp,
+                                lineHeight = 19.sp,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                         }
                     }
                     }
