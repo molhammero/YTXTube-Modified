@@ -2,6 +2,7 @@ package com.tensei.ytxtube
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -111,6 +112,14 @@ data class VideoDetails(
     val hdrQualities: List<Int> = emptyList(),
 
     val aspect: Float? = null,
+
+    val chapters: List<VideoChapter> = emptyList(),
+)
+
+@Immutable
+data class VideoChapter(
+    val startMs: Long,
+    val title: String,
 )
 
 @Immutable
@@ -252,6 +261,7 @@ object YouTube {
         val info = StreamCache.getOrLoad(id)
         val picked = StreamSelection.pick(info)
         val isLive = info.streamType == StreamType.LIVE_STREAM
+        val descriptionText = plainDescription(info.description)
         VideoDetails(
             item = VideoItem(
                 id = id,
@@ -265,10 +275,8 @@ object YouTube {
                 uploaded = if (isLive) "Live" else uploadedText(info.textualUploadDate, info.uploadDate),
                 isLive = isLive,
             ),
-            description = info.description?.let { d ->
-                if (d.type == Description.HTML) HtmlCompat.fromHtml(d.content, HtmlCompat.FROM_HTML_MODE_COMPACT).toString().trim()
-                else d.content.trim()
-            }.orEmpty(),
+            description = descriptionText,
+            chapters = chaptersFrom(info, descriptionText),
             likes = info.likeCount,
             subscribers = info.uploaderSubscriberCount,
             related = info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toVideoItem() }.let { list ->
@@ -282,6 +290,74 @@ object YouTube {
             aspect = (if (picked.usesSeparate) picked.video else picked.muxed)
                 ?.takeIf { it.width > 0 && it.height > 0 }?.let { it.width.toFloat() / it.height },
         )
+    }
+
+    private fun plainDescription(description: Description?): String = description?.let { d ->
+        if (d.type == Description.HTML) {
+            HtmlCompat.fromHtml(d.content, HtmlCompat.FROM_HTML_MODE_COMPACT).toString().trim()
+        } else {
+            d.content.trim()
+        }
+    }.orEmpty()
+
+    /**
+     * YouTube chapters come either from NewPipe's stream segments or from the timestamp
+     * lines creators put in the description. The segment list is preferred when present.
+     */
+    private fun chaptersFrom(info: StreamInfo, description: String): List<VideoChapter> {
+        val fromSegments = runCatching {
+            info.streamSegments.mapNotNull { segment ->
+                val title = segment.title?.trim().orEmpty()
+                if (segment.startTimeSeconds < 0 || title.isBlank()) null
+                else VideoChapter(segment.startTimeSeconds * 1000L, title)
+            }
+        }.getOrDefault(emptyList())
+        val raw = if (fromSegments.size >= 2) fromSegments else descriptionChapters(description)
+        val normalized = normalizedChapters(raw, info.duration)
+        if (normalized.isNotEmpty()) {
+            Log.i("YTXTube", "chapters ${info.id}: ${normalized.size} first=${normalized.first().title}")
+        }
+        return normalized
+    }
+
+    private val chapterLineRegex = Regex(
+        """^\s*(?:[-•*]\s*)?(\d{1,2}(?::\d{2}){1,2})\s*(?:[-–—:|]\s*)?(.+?)\s*$""",
+    )
+
+    private fun descriptionChapters(description: String): List<VideoChapter> {
+        val result = mutableListOf<VideoChapter>()
+        description.lineSequence().forEach { line ->
+            val match = chapterLineRegex.find(line.trim()) ?: return@forEach
+            val startMs = chapterTimestampMs(match.groupValues[1]) ?: return@forEach
+            val title = match.groupValues[2]
+                .trim()
+                .trim('-', '–', '—', ':', '|', '•')
+                .trim()
+            if (title.isNotBlank()) result += VideoChapter(startMs, title.take(160))
+        }
+        val sorted = result.sortedBy { it.startMs }.distinctBy { it.startMs }
+        if (sorted.size < 3 || sorted.first().startMs > 2_000L) return emptyList()
+        return sorted
+    }
+
+    private fun chapterTimestampMs(value: String): Long? {
+        val parts = value.split(':').map { it.toLongOrNull() ?: return null }
+        return when (parts.size) {
+            2 -> (parts[0] * 60L + parts[1]) * 1000L
+            3 -> ((parts[0] * 60L + parts[1]) * 60L + parts[2]) * 1000L
+            else -> null
+        }
+    }
+
+    private fun normalizedChapters(raw: List<VideoChapter>, durationSec: Long): List<VideoChapter> {
+        val durationMs = durationSec * 1000L
+        val result = raw.asSequence()
+            .map { VideoChapter(it.startMs.coerceAtLeast(0L), it.title.trim().take(160)) }
+            .filter { it.title.isNotBlank() && (durationMs <= 0L || it.startMs < durationMs) }
+            .sortedBy { it.startMs }
+            .distinctBy { it.startMs }
+            .toList()
+        return if (result.size >= 2) result else emptyList()
     }
 
     private suspend fun fetchFallbackRelated(id: String, title: String): List<VideoItem> {

@@ -63,6 +63,9 @@ class PlayerState(private val scope: CoroutineScope) {
     var bufferedMs by mutableLongStateOf(0L)
         private set
     var durationMs by mutableLongStateOf(0L)
+
+    /** Chapter timestamps from the current video, in playback order. */
+    var chapters by mutableStateOf<List<VideoChapter>>(emptyList())
         private set
 
     var speed by mutableFloatStateOf(1f)
@@ -292,6 +295,7 @@ class PlayerState(private val scope: CoroutineScope) {
         current = item
         if (isMusicMode) RecentMusic.record(item)
         details = null
+        chapters = emptyList()
         error = null
         firstFrameRendered = false
         videoAspect = 16f / 9f
@@ -337,6 +341,7 @@ class PlayerState(private val scope: CoroutineScope) {
                 .onSuccess { d ->
                     Log.i("YTXTubeTime", "details +${android.os.SystemClock.elapsedRealtime() - openedAt}ms")
                     details = d
+                    chapters = d.chapters
                     refreshTracks()
 
                     if (!aspectFromFrames) d.aspect?.let { videoAspect = it }
@@ -1101,6 +1106,7 @@ class PlayerState(private val scope: CoroutineScope) {
         sheet = null
         current = null
         details = null
+        chapters = emptyList()
         error = null
         loading = false
     }
@@ -1133,8 +1139,22 @@ class PlayerState(private val scope: CoroutineScope) {
         )
         current = item
         loadJob = scope.launch {
-            runCatching { YouTube.details(item.id) }.onSuccess { details = it; current = it.item; refreshTracks() }
+            runCatching { YouTube.details(item.id) }.onSuccess {
+                details = it
+                chapters = it.chapters
+                current = it.item
+                refreshTracks()
+            }
         }
+    }
+
+    val currentChapter: VideoChapter?
+        get() = chapterAt(positionMs)
+
+    fun chapterAt(ms: Long): VideoChapter? = chapters.lastOrNull { it.startMs <= ms }
+
+    fun seekToChapter(index: Int) {
+        chapters.getOrNull(index)?.let { seekTo(it.startMs) }
     }
 
     /** The latest active cue wins when a track has overlapping rolling cues. */
