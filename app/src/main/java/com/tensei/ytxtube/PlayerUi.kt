@@ -365,8 +365,14 @@ fun PlayerScreen(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(bottom = bottom + 32.dp),
                     ) {
-                        item(key = "wideMoreTitle") { SectionTitle("More videos") }
-                        val related = details?.related.orEmpty()
+                        // Keep related thumbnails off the network until the video frame is visible.
+                        // details.related used to be composed as soon as extraction returned, so
+                        // the whole recommended list competed with the opening stream.
+                        val showRelated = state.firstFrameRendered
+                        if (showRelated) {
+                            item(key = "wideMoreTitle") { SectionTitle("More videos") }
+                        }
+                        val related = if (showRelated) details?.related.orEmpty() else emptyList()
                         if (related.isNotEmpty()) {
                             items(related, key = { "wide-rel-" + it.id }) { video ->
                                 Box(Modifier.padding(horizontal = 14.dp, vertical = 2.dp)) { VideoRow(video, onClick = { onOpen(video) }) }
@@ -412,7 +418,8 @@ fun PlayerScreen(
                 contentPadding = PaddingValues(bottom = bottom + 32.dp),
             ) {
                 item(key = "info") { VideoDetailsBlock(state, item, details, c, descriptionOpen, { descriptionOpen = !descriptionOpen }, isLiveStream) }
-                val related = details?.related.orEmpty()
+                // Do not request the recommended thumbnails until the first video frame.
+                val related = if (state.firstFrameRendered) details?.related.orEmpty() else emptyList()
                 if (related.isNotEmpty()) {
                     item(key = "moreTitle") { SectionTitle("More videos") }
                     items(related, key = { "rel-" + it.id }) { video ->
